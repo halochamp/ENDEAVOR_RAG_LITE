@@ -1,0 +1,27 @@
+# Python and test artefacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.coverage
+htmlcov/
+*.egg-info/
+
+# User documents, indexes, memory, logs, and model/cache state
+workspace/.rag_state/
+workspace/knowledge/*
+!workspace/knowledge/.gitkeep
+.cache/
+*.log
+*.tmp
+*.part
+.env
+
+# Local build artefacts
+helpers/vision_ocr_macos
+dist/
+build/
+
+# OS/editor files
+.DS_Store
+.vscode/

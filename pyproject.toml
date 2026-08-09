@@ -1,0 +1,30 @@
+[project]
+name = "ENDEAVOR_RAG"
+version = "0.1.0"
+description = "Local-first Thai/English hybrid RAG assistant for Apple Silicon Macs"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { file = "LICENSE" }
+dependencies = [
+    "chromadb",
+    "httpx",
+    "langchain-core",
+    "langchain-openai",
+    "langchain-text-splitters",
+    "langgraph",
+    "mlx-vlm",
+    "numpy",
+    "pypdf",
+    "pythainlp",
+    "rank-bm25",
+    "requests",
+    "rich",
+    "sentence-transformers",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
