@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import threading
 import time
@@ -43,10 +42,28 @@ _start_lock_proc: "subprocess.Popen | None" = None
 
 
 def mlx_server_up() -> bool:
+    """Return true only when the configured endpoint serves this model.
+
+    A TCP listener is not enough: another local service can occupy the port,
+    or mlx_vlm.server can still be loading while it already accepts sockets.
+    The OpenAI-compatible models endpoint is a cheap, read-only readiness and
+    identity check for both cases.
+    """
     try:
-        with socket.create_connection((MLX_HOST, MLX_PORT), timeout=0.5):
-            return True
-    except OSError:
+        headers = {"Authorization": f"Bearer {MLX_API_KEY}"} if MLX_API_KEY else {}
+        response = requests.get(
+            f"{MLX_BASE_URL.rstrip('/')}/models",
+            headers=headers,
+            timeout=0.75,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        models = payload.get("data", [])
+        return isinstance(models, list) and any(
+            isinstance(item, dict) and item.get("id") == MLX_MODEL
+            for item in models
+        )
+    except (requests.RequestException, ValueError, TypeError, AttributeError):
         return False
 
 

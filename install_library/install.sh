@@ -73,9 +73,10 @@ Next steps:
 
 Optional manual server (Terminal 1):
   python -m mlx_vlm.server \\
-    --model mlx-community/Qwen3.5-2B-OptiQ-4bit \\
-    --host 127.0.0.1 --port 8092 --api-key x \\
-    --prefill-step-size 512
+    --model "\${RAGMAX_MLX_MODEL:-mlx-community/Qwen3.5-2B-OptiQ-4bit}" \\
+    --host "\${RAGMAX_MLX_HOST:-127.0.0.1}" --port "\${RAGMAX_MLX_PORT:-8092}" \\
+    --api-key "\${RAGMAX_MLX_API_KEY:-x}" \\
+    --prefill-step-size "\${RAGMAX_MLX_PREFILL_STEP_SIZE:-512}"
 
 The model download starts only when the MLX server is first launched.
 EOF

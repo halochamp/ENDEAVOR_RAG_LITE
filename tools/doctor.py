@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import platform
-import socket
 import sys
 from pathlib import Path
 
@@ -27,11 +26,13 @@ REQUIRED_MODULES = {
 
 
 def _check_server() -> bool:
+    # Reuse the same readiness + model-identity check as the runtime. A bare
+    # TCP probe reports unrelated services and half-loaded MLX processes as OK.
     try:
-        with socket.create_connection((config.MLX_HOST, config.MLX_PORT), timeout=1.0):
-            return True
-    except OSError:
+        from llm_client import mlx_server_up
+    except (ImportError, ModuleNotFoundError):
         return False
+    return mlx_server_up()
 
 
 def main() -> int:
@@ -74,7 +75,7 @@ def main() -> int:
     report("server python", config.MLX_SERVER_PYTHON.exists(), str(config.MLX_SERVER_PYTHON))
 
     if args.check_server:
-        report("MLX server", _check_server(), f"{config.MLX_HOST}:{config.MLX_PORT}")
+        report("MLX server", _check_server(), f"{config.MLX_HOST}:{config.MLX_PORT} ({config.MLX_MODEL})")
     else:
         print("INFO server: skipped (use --check-server; no process was started)")
 
