@@ -1,39 +1,43 @@
 # ENDEAVOR_RAG
 
-ผู้ช่วย RAG แบบ local-first สำหรับค้นเอกสารภาษาไทยและภาษาอังกฤษบน Mac Apple
-Silicon โดยข้อมูลเอกสารและดัชนีอยู่ในเครื่องของคุณเอง
+ค้นหาความรู้ของคุณให้พบ — ด้วย RAG ภาษาไทยและอังกฤษที่ทำงานบน Mac ของคุณเอง
 
-โปรเจกต์นี้เหมาะกับการถามว่า “ในเอกสารของฉันพูดถึงเรื่องนี้ว่าอย่างไร”
-รองรับการ ingest Markdown, text, PDF, CSV และ JSON แล้วค้นด้วย dense
-embeddings + BM25 + RRF ก่อนให้ local model ช่วยเลือก context และสรุปคำตอบ
+ENDEAVOR_RAG เปลี่ยนโฟลเดอร์เอกสารส่วนตัวให้เป็น knowledge base ที่พร้อมตอบคำถาม
+อย่างมีบริบท ไม่ว่าจะเป็นนโยบายบริษัท โน้ตวิจัย คู่มือการทำงาน รายงาน PDF หรือ
+ข้อมูล CSV/JSON ทุกอย่างตั้งแต่เอกสาร ดัชนี ไปจนถึง model server ทำงานแบบ
+local-first บน Apple Silicon
 
-โปรเจกต์นี้ไม่ใช่ web-search agent, ไม่ส่งเอกสารให้ cloud LLM และไม่ใช่
-เครื่องมืออ่าน filesystem ทั้งเครื่อง การค้นหาเริ่มจาก
-`workspace/knowledge/` ที่ผู้ใช้กำหนดไว้เท่านั้น
+สร้างครั้งเดียว แล้วเลือกใช้ได้สองแบบจาก knowledge base เดียวกัน:
 
-## ความสามารถ
+- **Pipeline A — Chat with your knowledge:** เปิด Terminal agent เพื่อถาม ค้นหา
+  เปิดอ่านไฟล์ และบันทึกสิ่งที่อยากจำ
+- **Pipeline B — Bring RAG to your agent:** ให้ agent ที่คุณสร้างเองเรียก
+  `rag_search` และ tools ของ ENDEAVOR_RAG เพื่อใช้ retrieval ที่พร้อมอยู่ในงานของคุณ
 
-- Thai-aware chunking พร้อม context parent/child
-- Dense retrieval ด้วย `paraphrase-multilingual-MiniLM-L12-v2`
-- BM25 ที่ตัดคำไทยด้วย `pythainlp`
-- RRF fusion และ local LLM reranking
-- Terminal chat ภาษาไทย พร้อมเครื่องมือค้นหาไฟล์ อ่านไฟล์ และบันทึก memory
-- Chroma/BM25 health check และ index ที่สร้างซ้ำต่อได้
-- Local MLX VLM server ที่ bind กับ `127.0.0.1` เท่านั้น
+## Why ENDEAVOR_RAG
 
-## ความต้องการของระบบ
+- **สร้างมาเพื่อภาษาไทยและอังกฤษ** — Thai-aware chunking, multilingual embeddings
+  และ BM25 ที่ตัดคำไทย
+- **ค้นหาอย่างมีหลักฐาน** — ผสาน dense retrieval กับ BM25 ผ่าน Reciprocal Rank
+  Fusion (RRF) ก่อนคืน context พร้อม source
+- **ข้อมูลอยู่กับคุณ** — knowledge root, index, logs และ memory อยู่ในเครื่อง
+- **ใช้ได้ทั้งคนและ agent** — เริ่มจาก Terminal ได้ทันที หรือนำ tool ไปต่อกับ
+  LangGraph/LangChain agent ของคุณ
+- **ดูแล index ได้ง่าย** — สร้างซ้ำได้, ตรวจสุขภาพได้, และ sync เอกสารที่เพิ่ม
+  เปลี่ยน หรือลบออกได้
 
-- macOS บน Apple Silicon (`arm64`)
-- Python 3.11
-- พื้นที่ดิสก์สำหรับ Python packages, embedding model และ LLM model
-- อินเทอร์เน็ตครั้งแรกสำหรับติดตั้ง packages และดาวน์โหลด model ที่เลือก
+```mermaid
+flowchart LR
+    D[Your documents] --> I[Thai-aware ingestion]
+    I --> K[Private knowledge base]
+    K --> R[Dense + BM25 + RRF]
+    R --> A[Pipeline A\nTerminal agent]
+    R --> B[Pipeline B\nYour agent]
+```
 
-โมเดลเริ่มต้นคือ
-[`mlx-community/Qwen3.5-2B-OptiQ-4bit`](https://huggingface.co/mlx-community/Qwen3.5-2B-OptiQ-4bit)
-น้ำหนักโมเดลไม่ได้อยู่ใน repository และจะดาวน์โหลดเมื่อเปิด MLX server ครั้งแรก
-โปรดตรวจ license ของโมเดลและ dependencies ก่อนใช้งานเชิงพาณิชย์
+## Get started
 
-## ติดตั้งแบบเร็ว
+ENDEAVOR_RAG ต้องการ macOS บน Apple Silicon และ Python 3.11
 
 ```bash
 bash install_library/install.sh
@@ -41,69 +45,109 @@ source .venv/bin/activate
 python tools/doctor.py
 ```
 
-Installer จะตรวจ macOS/Apple Silicon, สร้าง `.venv` ของโปรเจกต์นี้ และติดตั้ง
-dependency ที่ lock พร้อม hash โดยจะไม่เปิด server, ไม่โหลด model และไม่สแกน
-เอกสารของคุณ
-
-วางเอกสารไว้ใต้ `workspace/knowledge/` แล้วสร้างดัชนี:
+วางเอกสาร `.md`, `.txt`, `.pdf`, `.csv` หรือ `.json` ไว้ใน
+`workspace/knowledge/` แล้วสร้าง index:
 
 ```bash
 python tools/build_index.py
 ```
 
-จากนั้นเปิด agent:
+จากนั้นเลือก workflow ที่เหมาะกับคุณ
+
+## Pipeline A — Your private knowledge assistant
+
+เปิด agent แล้วเริ่มคุยกับเอกสารของคุณได้ทันที:
 
 ```bash
 python main.py
 ```
 
-การรัน `main.py` จะเปิด local MLX server ที่ port `8092` ให้เองถ้ายังไม่ทำงาน
-หรือเปิดเองใน Terminal แรกได้:
+Pipeline A เป็น Terminal ReAct agent ที่ใช้ local MLX model และเลือก tool ให้ตาม
+เจตนาของคำถาม:
+
+| คุณอยากทำอะไร | Agent ใช้อะไร |
+|---|---|
+| ถามเนื้อหาในเอกสาร | `rag_search` |
+| ดูภาพรวม knowledge base | `list_knowledge` |
+| หาเอกสารจากชื่อไฟล์ | `search_files` |
+| เปิดอ่านเอกสาร | `read_file` |
+| บันทึกสิ่งที่อยากจำ | `save_memory` |
+
+เมื่อเริ่ม `main.py` ระบบจะเตรียม embedding model และ local MLX server ให้พร้อมใช้
+บน `127.0.0.1:8092` ตามค่าตั้งต้น
+
+## Pipeline B — Retrieval for the agent you already have
+
+มี agent ของตัวเองอยู่แล้ว? นำ ENDEAVOR_RAG เข้าไปเป็น knowledge tool ได้โดยตรง
+Pipeline B ให้คุณใช้ retrieval pipeline เดียวกับ Pipeline A ใน LangGraph หรือ
+LangChain workflow ของคุณ พร้อม query expansion, dense search, Thai BM25, RRF,
+parent-context retrieval และ local reranking
+
+```python
+from langgraph.prebuilt import create_react_agent
+
+from llm_client import build_llm
+from rag_search import rag_search
+
+agent = create_react_agent(
+    build_llm(),
+    tools=[rag_search],
+    prompt=(
+        "Search the local knowledge base when needed. "
+        "Answer from returned context and cite its sources."
+    ),
+)
+
+result = agent.invoke({
+    "messages": [{"role": "user", "content": "สรุปนโยบายการลาคืออะไร"}]
+})
+```
+
+หรือให้ orchestrator เรียก retrieval tool โดยตรง:
+
+```python
+from rag_search import rag_search
+
+context = rag_search.invoke({"query": "เงื่อนไขการลางาน"})
+print(context)
+```
+
+`rag_search` คืน parent context ที่เกี่ยวข้องพร้อม `SOURCES:` ให้ agent ของคุณ
+นำไปสังเคราะห์คำตอบต่อได้อย่างโปร่งใส คุณยังเลือกเพิ่ม `list_knowledge`,
+`search_files`, `read_file` และ `save_memory` เป็น tools ของ agent ได้ตาม workflow
+
+## Built for your documents
+
+เอกสารทุกชิ้นอยู่ใต้ knowledge root ที่คุณกำหนด และระบบเก็บ runtime state แยกไว้ที่
+`workspace/.rag_state/`:
+
+- Chroma vector index
+- BM25 index
+- file registry และ index health data
+- local logs และ persistent memory
+
+การสร้าง index ซ้ำจะจัดการไฟล์ที่เปลี่ยนแปลงให้โดยอัตโนมัติ คุณจึงอัปเดต knowledge
+base ได้ต่อเนื่องโดยใช้คำสั่งเดิม:
 
 ```bash
-python -m mlx_vlm.server \
-  --model mlx-community/Qwen3.5-2B-OptiQ-4bit \
-  --host 127.0.0.1 --port 8092 --api-key x \
-  --prefill-step-size 512
+python tools/build_index.py
 ```
 
-แล้วใช้ `python main.py` ใน Terminal ที่สอง
+## Configure your workspace
 
-## การทำงานโดยย่อ
+กำหนดทุกอย่างผ่าน environment variables โดยไม่ต้องแก้ source code:
 
-```mermaid
-flowchart LR
-    U[ผู้ใช้] --> C[Terminal chat]
-    C --> A[Local ReAct agent]
-    A --> R[RAG tools]
-    R --> X[Dense + BM25 + RRF]
-    X --> S[workspace/.rag_state]
-    R --> D[workspace/knowledge]
-    A --> M[MLX VLM on 127.0.0.1]
-```
-
-ดัชนี, BM25 pickle, file registry, logs และ memory ถูกเก็บใน
-`workspace/.rag_state/` ซึ่งถูก ignore โดย Git เอกสารจริงของผู้ใช้ก็ถูก ignore
-เช่นกัน
-
-## การตั้งค่า
-
-ค่าทั้งหมดเป็น environment variables และไม่จำเป็นต้องแก้ source code:
-
-| ตัวแปร | ค่าเริ่มต้น | ความหมาย |
+| ตัวแปร | ค่าเริ่มต้น | ใช้สำหรับ |
 |---|---|---|
-| `RAGMAX_WORKSPACE` | `workspace/` | workspace หลักของโปรเจกต์ |
-| `RAGMAX_KNOWLEDGE_DIR` | `workspace/knowledge/` | root ของเอกสารที่จะ index |
-| `RAGMAX_STATE_DIR` | `workspace/.rag_state/` | Chroma, BM25, registry, logs และ memory |
-| `RAGMAX_MLX_HOST` | `127.0.0.1` | host ของ local server |
-| `RAGMAX_MLX_PORT` | `8092` | port ของ local server |
-| `RAGMAX_MLX_MODEL` | model ID ด้านบน | model ที่ใช้ตอบและ rerank |
-| `RAGMAX_MLX_API_KEY` | `x` | local transport key; อย่าเปิด server ออก LAN |
-| `RAGMAX_MLX_PYTHON` | `.venv/bin/python` | Python ที่ใช้เปิด `mlx_vlm.server` |
-| `RAGMAX_MLX_PREFILL_STEP_SIZE` | `512` | prefill step ของ MLX server |
-| `RAGMAX_NO_AUTO_START` | ไม่ตั้งค่า | ตั้งเป็น `1` เพื่อไม่ให้ `main.py` spawn server |
+| `RAGMAX_WORKSPACE` | `workspace/` | workspace หลัก |
+| `RAGMAX_KNOWLEDGE_DIR` | `workspace/knowledge/` | โฟลเดอร์เอกสาร |
+| `RAGMAX_STATE_DIR` | `workspace/.rag_state/` | index, registry, logs และ memory |
+| `RAGMAX_MLX_HOST` | `127.0.0.1` | local MLX server |
+| `RAGMAX_MLX_PORT` | `8092` | port ของ MLX server |
+| `RAGMAX_MLX_MODEL` | Qwen3.5-2B-OptiQ-4bit | model สำหรับตอบและ rerank |
+| `RAGMAX_NO_AUTO_START` | ไม่ตั้งค่า | ควบคุมการเปิด server อัตโนมัติ |
 
-ตัวอย่างย้ายเอกสารและ state ไปยังดิสก์อื่น:
+ตัวอย่าง workspace บนดิสก์อื่น:
 
 ```bash
 export RAGMAX_WORKSPACE="$PWD/my_rag_workspace"
@@ -112,40 +156,25 @@ export RAGMAX_STATE_DIR="$RAGMAX_WORKSPACE/.rag_state"
 python tools/build_index.py
 ```
 
-แม้กำหนด path เอง ระบบจะปฏิเสธ source ที่หลุดออกนอก knowledge root รวมถึง
-symlink/path traversal เพื่อไม่บันทึก absolute path ของไฟล์ที่อยู่นอกขอบเขต
-
-## ตรวจสอบและทดสอบ
-
-คำสั่ง doctor เป็น read-only และไม่เปิด model:
+## Verify with confidence
 
 ```bash
 python tools/doctor.py
 python tools/doctor.py --check-server
-```
-
-รัน deterministic regression tests:
-
-```bash
 python -m pytest tests -q
 ```
 
-ชุดทดสอบใช้ temporary state และ fake embeddings จึงไม่ดาวน์โหลด model และไม่
-แตะ index ของผู้ใช้ การทดสอบ live model เป็นขั้นตอนแยกต่างหากและต้องเปิด server
-ด้วยตนเอง
+ชุดทดสอบ deterministic ใช้ temporary state และ fake embeddings จึงรันได้โดยไม่
+กระทบ index ของคุณ
 
-## ความเป็นส่วนตัวและข้อจำกัด
+## Privacy by design
 
-- Local UI และ MLX server bind กับ `127.0.0.1`; อย่าเปลี่ยนเป็น `0.0.0.0`
-  หากไม่เข้าใจผลด้านความปลอดภัย
-- เอกสาร, path, index และ memory อยู่ในเครื่องและไม่ถูกส่งให้ hosted LLM โดย
-  source นี้
-- Model ขนาดเล็กอาจสรุปผิดหรือเลือก tool ผิด ควรตรวจคำตอบสำคัญกับเอกสารต้นฉบับ
-- ห้ามใส่ credentials, private keys, session files หรือข้อมูลส่วนตัวที่ไม่จำเป็น
-  ลงใน prompt, issue หรือ repository
+ENDEAVOR_RAG เก็บเอกสาร paths, index และ memory ไว้ในเครื่อง และ local UI/MLX
+server ใช้ `127.0.0.1` ตามค่าเริ่มต้น โปรดเก็บ credentials, private keys และ
+ข้อมูลอ่อนไหวออกจาก prompt, issue และ repository
 
-## License และการร่วมพัฒนา
+## License and contributing
 
-โปรเจกต์เผยแพร่ภายใต้ MIT License สำหรับ source ของโปรเจกต์นี้ ดู
+ENDEAVOR_RAG เผยแพร่ภายใต้ MIT License ดูรายละเอียดที่
 [`LICENSE`](LICENSE), [`SECURITY.md`](SECURITY.md) และ
-[`CONTRIBUTING.md`](CONTRIBUTING.md) ก่อนใช้งานหรือส่งการเปลี่ยนแปลง
+[`CONTRIBUTING.md`](CONTRIBUTING.md)
