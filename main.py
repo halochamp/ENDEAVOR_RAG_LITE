@@ -26,29 +26,13 @@ from langgraph.prebuilt import create_react_agent
 import ui
 import _progress
 import store
-from config import KNOWLEDGE_DIR, LOG_DIR, MEMORY_PATH, ensure_runtime_dirs
-from file_registry import check, register, deregister, all_registered, ghost_files
-from ingestor import ingest_file, delete_file, _rel as _ingestor_rel
+from config import LOG_DIR, MEMORY_PATH, ensure_runtime_dirs
+from ingestor import DATA_DIR
 from rag_search import rag_search, list_knowledge, search_files, read_file, save_memory
 from llm_client import build_llm, ensure_mlx_server, MLX_MODEL as AGENT_MODEL
 
-DATA_DIR          = KNOWLEDGE_DIR
 MAX_HISTORY_TURNS = 5
 MAX_LOOP_ITERS    = 10   # hard stop: LangGraph recursion_limit = iters*2+1
-SUPPORTED_EXT     = {".txt", ".md", ".pdf", ".csv", ".json"}
-
-
-def _is_indexable_file(path: Path) -> bool:
-    """Return whether a path is a supported user document, not runtime state."""
-    if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXT:
-        return False
-    if path.name == "file_hashes.json":
-        return False
-    try:
-        path.resolve().relative_to(store.DB_DIR.parent.resolve())
-    except (ValueError, OSError, RuntimeError):
-        return True
-    return False
 
 SYSTEM_PROMPT = """\
 You are Endeavor — a local AI agent and RAG agent ที่ดูแล local knowledge base สร้างโดย HaloChamp
@@ -346,65 +330,48 @@ def _run_chat():
 
 
 def _run_build():
+    """Presentation layer only — the actual scan/ingest/health-check work lives
+    in ingestor.sync_knowledge_base() so external callers can drive the same
+    pipeline without this rich-terminal UI."""
     log = logging.getLogger("build")
-    files = [f for f in DATA_DIR.rglob("*") if _is_indexable_file(f)]
+    from ingestor import sync_knowledge_base, _is_indexable_file as _idx_file
 
-    ui.print_build_header(str(DATA_DIR), len(files))
+    total_preview = sum(1 for f in DATA_DIR.rglob("*") if _idx_file(f))
+    ui.print_build_header(str(DATA_DIR), total_preview)
 
-    if not files:
+    if total_preview == 0:
         print(f"   {ui.C_WARN}No supported files found in knowledge/{ui.R}\n")
         return
 
     log.info(f"[build] ─── sync เริ่มต้น ───")
-    progress    = ui.BuildProgress()
+    progress = ui.BuildProgress()
+    spinners: dict[str, "ui.Spinner"] = {}
+
+    def _on_start(idx, total, name):
+        log.info(f"[build] [{idx}/{total}] {name}")
+        sp = ui.Spinner(f"📄 {name}…")
+        sp.__enter__()
+        spinners["current"] = sp
+
+    def _on_file(idx, total, name, status, n_chunks, err):
+        sp = spinners.pop("current", None)
+        if sp:
+            sp.__exit__(None, None, None)
+        if err:
+            log.error(f"[build]   {name} FAILED: {err}")
+            progress.add_row(name, "error")
+        else:
+            log.info(f"[build]   {name} → {status}")
+            progress.add_row(name, status, n_chunks)
+
     build_start = time.time()
-
-    # Purge registered files that no longer exist on disk
-    current_abs = {str(f.resolve()) for f in files}
-    for stale in all_registered():
-        if stale not in current_abs:
-            log.info(f"[build] purge deleted file: {Path(stale).name}")
-            delete_file(Path(stale))
-            deregister(stale)
-
-    for idx, file in enumerate(sorted(files), 1):
-        try:
-            status = check(str(file))
-            log.info(f"[build] [{idx}/{len(files)}] {file.name} → {status}")
-            source = _ingestor_rel(file)
-
-            if status == "skip":
-                if store.has_source(source):
-                    progress.add_row(file.name, "skip")
-                    continue
-                status = "changed"
-                log.info(f"[build]   {file.name} — hash matched but data missing, re-ingesting")
-            elif status == "new" and store.has_source(source):
-                # Previous ingest died after Chroma upsert but before registry/
-                # BM25 completion. Purge the partial source so semantic dedup
-                # cannot hide the missing rows on retry.
-                status = "changed"
-                log.info(f"[build]   {file.name} — unregistered partial data found, rebuilding")
-
-            if status == "changed":
-                log.info(f"[build]   purge old chunks...")
-                delete_file(file)
-                deregister(str(file))
-
-            with ui.Spinner(f"📄 {file.name}…"):
-                n = ingest_file(file)
-            register(str(file))
-            progress.add_row(file.name, status, n)
-        except Exception as e:
-            log.error(f"[build]   {file.name} FAILED: {e}")
-            progress.add_row(file.name, "error")
-
+    result = sync_knowledge_base(on_file=_on_file, on_file_start=_on_start)
     elapsed = time.time() - build_start
+
     log.info(f"[build] ─── sync เสร็จ — {elapsed:.1f}s ───")
     progress.print_summary()
 
-    issues = store.health_check()
-    ghost_count = len(ghost_files())
+    issues, ghost_count = result["health_issues"], result["ghost_count"]
     for issue in issues:
         log.warning(f"[build] anomaly: {issue}")
     if ghost_count:

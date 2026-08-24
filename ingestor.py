@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from llm_client import chat as _llm_chat
-from config import source_key
+from config import source_key, KNOWLEDGE_DIR
 
 import embedder
 import store
@@ -23,12 +23,31 @@ log = logging.getLogger("ingestor")
 SIMILARITY_REJECT = 0.95
 SIMILARITY_PASS   = 0.75
 
+# Single source of truth for "what counts as a KB document" — both this
+# project's own main.py and any external caller share this instead of
+# recomputing the knowledge/ path and extension set.
+DATA_DIR      = KNOWLEDGE_DIR
+SUPPORTED_EXT = {".txt", ".md", ".pdf", ".csv", ".json"}
+
 _chunk_hashes: set[str] = set()
 
 
 def _rel(path: Path) -> str:
     """Return a portable source key confined to the knowledge root."""
     return source_key(path)
+
+
+def _is_indexable_file(path: Path) -> bool:
+    """Return whether a path is a supported user document, not runtime state."""
+    if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXT:
+        return False
+    if path.name == "file_hashes.json":
+        return False
+    try:
+        path.resolve().relative_to(store.DB_DIR.parent.resolve())
+    except (ValueError, OSError, RuntimeError):
+        return True
+    return False
 
 
 # ── File loaders ──────────────────────────────────────────────────────────────
@@ -285,3 +304,95 @@ def delete_file(path: Path) -> int:
     # Clear session hash cache so same-process re-ingest is not blocked by Gate 1
     _chunk_hashes.clear()
     return n
+
+
+# ── KB sync — the UI-agnostic core of "build the RAG index" ────────────────────
+#
+# Lifted out of main.py's _run_build() so any caller (this project's own chat
+# program, or an external agent wrapper) can drive real chunk/embed/BM25
+# ingestion without depending on ui.py's rich terminal renderer. main.py keeps
+# its own presentation layer and calls this for the actual work — see
+# main.py:_run_build().
+
+def sync_knowledge_base(on_file=None, on_file_start=None) -> dict:
+    """Scan DATA_DIR, ingest new/changed files, purge deleted ones, run health checks.
+
+    on_file(idx, total, filename, status, n_chunks, error), if given, fires once
+    per file after it's processed — status is one of "new"/"changed"/"skip"/"error";
+    n_chunks is the stored-chunk count (0 for skip, meaningless for error); error is
+    the exception message on failure, else None.
+
+    on_file_start(idx, total, filename), if given, fires right before a file
+    that actually needs ingesting starts processing (not for a "skip") — lets a
+    caller drive a live per-file spinner instead of only a post-hoc row.
+
+    Returns:
+        {"data_dir": str, "total_found": int, "rows": [{"name", "status", "n_chunks"}],
+         "elapsed": float, "health_issues": list[str], "ghost_count": int}
+    """
+    import file_registry as _registry
+
+    start = time.time()
+    files = [f for f in DATA_DIR.rglob("*") if _is_indexable_file(f)]
+    rows: list[dict] = []
+
+    # Purge registered files that no longer exist on disk
+    current_abs = {str(f.resolve()) for f in files}
+    for stale in _registry.all_registered():
+        if stale not in current_abs:
+            delete_file(Path(stale))
+            _registry.deregister(stale)
+
+    for idx, file in enumerate(sorted(files), 1):
+        status = "error"
+        n_chunks = 0
+        err = None
+        try:
+            status = _registry.check(str(file))
+            source = _rel(file)
+
+            if status == "skip":
+                if store.has_source(source):
+                    if on_file:
+                        on_file(idx, len(files), file.name, "skip", 0, None)
+                    rows.append({"name": file.name, "status": "skip", "n_chunks": 0})
+                    continue
+                status = "changed"
+                log.info(f"[ingestor]   {file.name} — hash matched but data missing, re-ingesting")
+            elif status == "new" and store.has_source(source):
+                # Previous ingest died after Chroma upsert but before registry/BM25
+                # completion. Purge the partial source or semantic dedup will see
+                # its own rows and prevent a clean retry.
+                status = "changed"
+                log.info(f"[ingestor]   {file.name} — unregistered partial data found, rebuilding")
+
+            if status == "changed":
+                delete_file(file)
+                _registry.deregister(str(file))
+
+            if on_file_start:
+                on_file_start(idx, len(files), file.name)
+            n_chunks = ingest_file(file)
+            _registry.register(str(file))
+        except Exception as e:
+            status = "error"
+            err = str(e)
+            log.error(f"[ingestor]   {file.name} FAILED: {err}")
+        rows.append({"name": file.name, "status": status, "n_chunks": n_chunks})
+        if on_file:
+            on_file(idx, len(files), file.name, status, n_chunks, err)
+
+    try:
+        issues = store.health_check()
+        ghost_count = len(_registry.ghost_files())
+    except Exception:
+        issues, ghost_count = [], 0
+
+    return {
+        "data_dir": str(DATA_DIR),
+        "total_found": len(files),
+        "rows": rows,
+        "elapsed": time.time() - start,
+        "health_issues": issues,
+        "ghost_count": ghost_count,
+    }
