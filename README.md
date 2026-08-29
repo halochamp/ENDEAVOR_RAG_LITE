@@ -7,12 +7,14 @@ ENDEAVOR_RAG เปลี่ยนโฟลเดอร์เอกสารส�
 ข้อมูล CSV/JSON ทุกอย่างตั้งแต่เอกสาร ดัชนี ไปจนถึง model server ทำงานแบบ
 local-first บน Apple Silicon
 
-สร้างครั้งเดียว แล้วเลือกใช้ได้สองแบบจาก knowledge base เดียวกัน:
+สร้างครั้งเดียว แล้วเลือกใช้ได้สามทางจาก knowledge base เดียวกัน:
 
 - **Pipeline A — Chat with your knowledge:** เปิด Terminal agent เพื่อถาม ค้นหา
   เปิดอ่านไฟล์ และบันทึกสิ่งที่อยากจำ
 - **Pipeline B — Bring RAG to your agent:** ให้ agent ที่คุณสร้างเองเรียก
   `rag_search` และ tools ของ ENDEAVOR_RAG เพื่อใช้ retrieval ที่พร้อมอยู่ในงานของคุณ
+- **Pipe C — Connect through MCP:** ให้ MCP client เรียก `rag_retrieve` ผ่าน
+  stdio แล้วส่งต่อให้ Pipeline B โดยไม่เปิด LLM หรือ filesystem tool เพิ่ม
 
 ## Why ENDEAVOR_RAG
 
@@ -32,7 +34,8 @@ flowchart LR
     I --> K[Private knowledge base]
     K --> R[Dense + BM25 + RRF]
     R --> A[Pipeline A\nTerminal agent]
-    R --> B[Pipeline B\nYour agent]
+    R --> B[Pipe B\nrag_retrieve API]
+    C[Pipe C\nMCP stdio adapter] --> B
 ```
 
 ## Get started
@@ -116,6 +119,39 @@ print(context)
 นำไปสังเคราะห์คำตอบต่อได้อย่างโปร่งใส คุณยังเลือกเพิ่ม `list_knowledge`,
 `search_files`, `read_file` และ `save_memory` เป็น tools ของ agent ได้ตาม workflow
 
+## Pipe C — MCP adapter for external clients
+
+Pipe C (`mcp_server.py`) เป็นชั้น protocol บาง ๆ สำหรับ MCP client ที่ต้องการใช้
+retrieval ของ ENDEAVOR_RAG จากโปรเซสอื่น:
+
+```text
+MCP client/agent → Pipe C (stdio) → Pipe B (rag_retrieve) → retriever/index
+```
+
+Pipe C มี tool เดียวคือ `rag_retrieve` และคง semantics ของ Pipe B เดิมไว้ ได้แก่
+`query` แบบข้อความเดียวหรือ query variants สูงสุด 8 รายการ, `mode` (`chunks`,
+`files`, `source_first`) และตัวกรอง tags/ชื่อไฟล์/วันที่/ชนิดไฟล์ การเรียกใช้จะถูก
+ตรวจชนิดข้อมูลและขนาดก่อนส่งต่อ, serialize เพื่อป้องกัน concurrent access ของ
+Chroma/BM25, จำกัดผลลัพธ์ที่ 50,000 ตัวอักษร และแปลง backend error เป็น error
+ทั่วไปโดยไม่ส่งรายละเอียด path หรือ traceback ออกไป
+
+Pipe C เป็น read-only และไม่เรียก `main.py`, `rag_search.py` หรือ `llm_client.py`:
+จึงไม่เปิด Pipeline A และไม่ใช้ model server เพิ่ม การเริ่ม server ใช้ stdio
+เท่านั้นและไม่เปิด network port:
+
+```bash
+# Run from the repository root after installation
+python mcp_server.py
+
+# Register with a local MCP host that supports stdio
+codex mcp add endeavor-rag -- "$PWD/.venv/bin/python" "$PWD/mcp_server.py"
+```
+
+ผลลัพธ์ของ Pipe B มี absolute path สำหรับให้ client ไปอ่าน source ต่อ ดังนั้นควร
+ลงทะเบียน Pipe C กับ MCP host ที่เชื่อถือได้บนเครื่องเดียวกันเท่านั้น อย่านำ stdio
+adapter ไปวางหลัง public network endpoint โดยไม่ออกแบบ authentication และ policy
+สำหรับการเปิดเผย path ใหม่
+
 ## Built for your documents
 
 เอกสารทุกชิ้นอยู่ใต้ knowledge root ที่คุณกำหนด และระบบเก็บ runtime state แยกไว้ที่
@@ -165,7 +201,8 @@ python -m pytest tests -q
 ```
 
 ชุดทดสอบ deterministic ใช้ temporary state และ fake embeddings จึงรันได้โดยไม่
-กระทบ index ของคุณ
+กระทบ index ของคุณ และ `_test_mcp_pipe_c.py` ตรวจ catalog, C→B delegation,
+validation, error mapping, output cap และ stdio handshake โดยไม่ต้องโหลด model
 
 ## Privacy by design
 

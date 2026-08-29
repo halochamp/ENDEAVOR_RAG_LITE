@@ -12,6 +12,7 @@ dependencies = [
     "langchain-openai",
     "langchain-text-splitters",
     "langgraph",
+    "mcp>=1.26,<2",
     "mlx-vlm",
     "numpy",
     "pypdf",

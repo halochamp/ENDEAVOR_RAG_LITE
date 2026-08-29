@@ -43,12 +43,12 @@ def t28_e2e():
 
 
 def t40_filename_containing_chroma_is_indexable():
-    import main
+    import ingestor
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "chromatic.md"
         path.write_text("supported document")
-        assert main._is_indexable_file(path)
+        assert ingestor._is_indexable_file(path)
 
 
 def t41_rejected_symlink_does_not_abort_build():
@@ -68,20 +68,22 @@ def t41_rejected_symlink_does_not_abort_build():
 
 
 def t55_unregistered_partial_source_is_rebuilt():
-    import main
+    import file_registry
+    import ingestor
+    import store
     from config import KNOWLEDGE_DIR
 
     saved = {
-        "DATA_DIR": main.DATA_DIR,
-        "check": main.check,
-        "all_registered": main.all_registered,
-        "has_source": main.store.has_source,
-        "delete_file": main.delete_file,
-        "deregister": main.deregister,
-        "ingest_file": main.ingest_file,
-        "register": main.register,
-        "health_check": main.store.health_check,
-        "ghost_files": main.ghost_files,
+        "DATA_DIR": ingestor.DATA_DIR,
+        "check": file_registry.check,
+        "all_registered": file_registry.all_registered,
+        "has_source": store.has_source,
+        "delete_file": ingestor.delete_file,
+        "deregister": file_registry.deregister,
+        "ingest_file": ingestor.ingest_file,
+        "register": file_registry.register,
+        "health_check": store.health_check,
+        "ghost_files": file_registry.ghost_files,
     }
     deleted = []
     path = None
@@ -92,23 +94,31 @@ def t55_unregistered_partial_source_is_rebuilt():
         ) as f:
             f.write("supported document")
             path = Path(f.name)
-        main.DATA_DIR = KNOWLEDGE_DIR
-        main.check = lambda value: "new"
-        main.all_registered = lambda: []
-        main.store.has_source = lambda source: True
-        main.delete_file = lambda value: deleted.append(Path(value).name) or 1
-        main.deregister = lambda value: None
-        main.ingest_file = lambda value: 1
-        main.register = lambda value: None
-        main.store.health_check = lambda: []
-        main.ghost_files = lambda: []
-        main._run_build()
+        ingestor.DATA_DIR = KNOWLEDGE_DIR
+        file_registry.check = lambda value: "new"
+        file_registry.all_registered = lambda: []
+        store.has_source = lambda source: True
+        ingestor.delete_file = lambda value: deleted.append(Path(value).name) or 1
+        file_registry.deregister = lambda value: None
+        ingestor.ingest_file = lambda value: 1
+        file_registry.register = lambda value: None
+        store.health_check = lambda: []
+        file_registry.ghost_files = lambda: []
+        ingestor.sync_knowledge_base()
         assert deleted == [path.name], deleted
     finally:
         if path:
             path.unlink(missing_ok=True)
-        for name, value in saved.items():
-            setattr(main, name, value)
+        ingestor.DATA_DIR = saved["DATA_DIR"]
+        file_registry.check = saved["check"]
+        file_registry.all_registered = saved["all_registered"]
+        store.has_source = saved["has_source"]
+        ingestor.delete_file = saved["delete_file"]
+        file_registry.deregister = saved["deregister"]
+        ingestor.ingest_file = saved["ingest_file"]
+        file_registry.register = saved["register"]
+        store.health_check = saved["health_check"]
+        file_registry.ghost_files = saved["ghost_files"]
 
 
 r.test("T28 ingest txt + search e2e", t28_e2e)
