@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 
 from config import MEMORY_PATH, source_path
 import retriever
+import kb_operations
 from expander import expand
 from llm_client import chat as _llm_chat
 
@@ -105,9 +106,8 @@ def list_knowledge() -> str:
     try:
         import math
         import random
-        from file_registry import all_registered
 
-        paths = all_registered()
+        paths = kb_operations.registered_paths()
         if not paths:
             return "ยังไม่มีไฟล์ใน knowledge base ครับ"
 
@@ -152,12 +152,10 @@ def search_files(query: str) -> str:
     Returns up to 30 matching filenames. Shows remaining count if more exist.
     """
     try:
-        from file_registry import all_registered
-        paths = all_registered()
+        paths = kb_operations.registered_paths()
         if not paths:
             return "ยังไม่มีไฟล์ใน knowledge base ครับ"
-        q = query.lower()
-        matched = [p for p in paths if q in Path(p).name.lower()]
+        matched = kb_operations.search_registered_paths(query)
         if not matched:
             return f"ไม่พบไฟล์ที่มีคำว่า '{query}' ในชื่อไฟล์"
         total = len(matched)
@@ -177,22 +175,15 @@ def read_file(filename: str) -> str:
     If multiple files match, ask user to be more specific.
     """
     try:
-        from file_registry import all_registered
-        paths = all_registered()
-        # exact path or exact filename match
-        for p in paths:
-            if _to_abs(p) == filename or Path(p).name == filename:
-                return Path(p).read_text(encoding="utf-8", errors="replace")
-        # partial name match
-        q = filename.lower()
-        matches = [p for p in paths if q in Path(p).name.lower()]
-        if not matches:
+        try:
+            _, text = kb_operations.read_registered_file(filename)
+            return text
+        except kb_operations.RegisteredFileNotFound:
             return f"[error] ไม่พบไฟล์ '{filename}' ใน knowledge base"
-        if len(matches) > 1:
-            names = "\n".join(f"  - {Path(p).name}" for p in matches[:10])
-            more = f"\n  ... และอีก {len(matches)-10} ไฟล์" if len(matches) > 10 else ""
+        except kb_operations.RegisteredFileAmbiguous as exc:
+            names = "\n".join(f"  - {Path(p).name}" for p in exc.matches[:10])
+            more = f"\n  ... และอีก {len(exc.matches)-10} ไฟล์" if len(exc.matches) > 10 else ""
             return f"[error] พบหลายไฟล์ที่ตรงกับ '{filename}':\n{names}{more}\nกรุณาระบุชื่อให้ชัดเจนขึ้น"
-        return Path(matches[0]).read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return f"[error] {e}"
 

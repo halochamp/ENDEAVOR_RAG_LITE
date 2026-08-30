@@ -19,11 +19,18 @@ def _server_module():
     return mcp_server
 
 
-def t_catalog_is_only_pipe_b_retrieval():
+def t_catalog_exposes_five_read_only_tools():
     server = _server_module()
     tools = asyncio.run(server.mcp.list_tools())
-    assert [item.name for item in tools] == ["rag_retrieve"]
-    schema = tools[0].inputSchema
+    assert [item.name for item in tools] == [
+        "rag_retrieve",
+        "rag_list",
+        "rag_search_files",
+        "rag_read_file",
+        "rag_health",
+    ]
+    by_name = {item.name: item for item in tools}
+    schema = by_name["rag_retrieve"].inputSchema
     assert set(schema["properties"]) == {
         "query",
         "mode",
@@ -34,6 +41,14 @@ def t_catalog_is_only_pipe_b_retrieval():
         "source_type",
     }
     assert schema["required"] == ["query"]
+    assert by_name["rag_list"].inputSchema.get("required", []) == []
+    retrieve_description = by_name["rag_retrieve"].description or ""
+    assert "SAME question" in retrieve_description
+    assert "preserve one intent" in retrieve_description
+    assert "Do not add a new subquestion" in retrieve_description
+    assert by_name["rag_search_files"].inputSchema["required"] == ["query"]
+    assert by_name["rag_read_file"].inputSchema["required"] == ["filename"]
+    assert by_name["rag_health"].inputSchema.get("required", []) == []
 
 
 def t_pipe_c_does_not_load_pipe_a_or_llm():
@@ -187,6 +202,94 @@ def t_result_at_or_below_cap_is_unchanged():
         assert server.rag_retrieve("query") == expected
 
 
+def t_shared_kb_tools_are_deterministic_and_read_only():
+    server = _server_module()
+    registered = ["/kb/alpha.md", "/kb/beta.md", "/kb/gamma.pdf"]
+
+    with mock.patch.object(server.kb_operations, "registered_paths", return_value=registered):
+        listed = server.rag_list(limit=2, offset=1)
+    assert "registered_files=3" in listed
+    assert "returned=2" in listed
+    assert "beta.md" in listed and "gamma.pdf" in listed
+    assert "alpha.md" not in listed
+
+    with mock.patch.object(
+        server.kb_operations,
+        "search_registered_paths",
+        return_value=["/kb/alpha.md", "/kb/gamma.pdf"],
+    ):
+        searched = server.rag_search_files("a", limit=1)
+    assert "matches=2" in searched
+    assert "returned=1" in searched
+    assert "alpha.md" in searched and "gamma.pdf" not in searched
+
+    with mock.patch.object(
+        server.kb_operations,
+        "read_registered_file",
+        return_value=(Path("/kb/alpha.md"), "REGISTERED_BODY"),
+    ):
+        read = server.rag_read_file("alpha.md")
+    assert read == "file=alpha.md\nREGISTERED_BODY"
+
+    with mock.patch.object(
+        server.kb_operations,
+        "health_snapshot",
+        return_value={"issues": [], "ghost_files": []},
+    ):
+        health = server.rag_health()
+    assert health == "status=healthy\nissues=0\nghost_files=0"
+
+
+def t_shared_kb_tools_validate_scope_and_bounds():
+    server = _server_module()
+    invalid_calls = [
+        lambda: server.rag_list(limit=0),
+        lambda: server.rag_list(limit=server._MAX_LIST_LIMIT + 1),
+        lambda: server.rag_list(offset=-1),
+        lambda: server.rag_search_files(""),
+        lambda: server.rag_search_files("x", limit=0),
+        lambda: server.rag_read_file(""),
+    ]
+    for call in invalid_calls:
+        try:
+            call()
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("accepted invalid shared-KB request")
+
+    with mock.patch.object(
+        server.kb_operations,
+        "read_registered_file",
+        side_effect=server.kb_operations.RegisteredFileNotFound("/etc/passwd"),
+    ):
+        try:
+            server.rag_read_file("/etc/passwd")
+        except ValueError as exc:
+            assert "not registered" in str(exc)
+        else:
+            raise AssertionError("unregistered arbitrary path was readable")
+
+    ambiguous = server.kb_operations.RegisteredFileAmbiguous(
+        "report", ["/kb/report-a.md", "/kb/report-b.md"]
+    )
+    with mock.patch.object(server.kb_operations, "read_registered_file", side_effect=ambiguous):
+        try:
+            server.rag_read_file("report")
+        except ValueError as exc:
+            assert "ambiguous" in str(exc)
+            assert "report-a.md" in str(exc)
+        else:
+            raise AssertionError("ambiguous filename was accepted")
+
+
+def t_pipe_c_import_graph_never_loads_local_llm_modules():
+    server = _server_module()
+    assert server is not None
+    for module_name in ("main", "llm_client", "rag_search"):
+        assert module_name not in sys.modules, module_name
+
+
 def t_pipe_b_calls_are_serialized():
     server = _server_module()
     first_entered = threading.Event()
@@ -243,10 +346,16 @@ def t_stdio_handshake_lists_pipe_c_without_starting_a_model():
 
     name, tools = asyncio.run(handshake())
     assert name == "ENDEAVOR_RAG Pipe C"
-    assert tools == ["rag_retrieve"]
+    assert tools == [
+        "rag_retrieve",
+        "rag_list",
+        "rag_search_files",
+        "rag_read_file",
+        "rag_health",
+    ]
 
 
-r.test("catalog exposes only rag_retrieve", t_catalog_is_only_pipe_b_retrieval)
+r.test("catalog exposes five read-only tools", t_catalog_exposes_five_read_only_tools)
 r.test("Pipe C does not load Pipe A or its LLM", t_pipe_c_does_not_load_pipe_a_or_llm)
 r.test("Pipe B resolves inside this RAG tree", t_pipe_b_module_resolves_inside_this_rag_tree)
 r.test("valid request delegates to Pipe B", t_delegates_validated_request_to_pipe_b)
@@ -258,6 +367,9 @@ r.test("non-text Pipe B result is rejected", t_non_text_pipe_b_result_is_rejecte
 r.test("oversized output is explicitly capped", t_oversized_result_is_explicitly_capped)
 r.test("tiny output cap never overflows", t_tiny_cap_never_exceeds_configured_limit)
 r.test("output at the cap is unchanged", t_result_at_or_below_cap_is_unchanged)
+r.test("shared KB tools are deterministic and read-only", t_shared_kb_tools_are_deterministic_and_read_only)
+r.test("shared KB tools validate scope and bounds", t_shared_kb_tools_validate_scope_and_bounds)
+r.test("Pipe C import graph never loads local LLM modules", t_pipe_c_import_graph_never_loads_local_llm_modules)
 r.test("Pipe B calls are serialized", t_pipe_b_calls_are_serialized)
 r.test("stdio handshake lists Pipe C without starting a model", t_stdio_handshake_lists_pipe_c_without_starting_a_model)
 

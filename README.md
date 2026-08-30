@@ -13,8 +13,9 @@ local-first บน Apple Silicon
   เปิดอ่านไฟล์ และบันทึกสิ่งที่อยากจำ
 - **Pipeline B — Bring RAG to your agent:** ให้ agent ที่คุณสร้างเองเรียก
   `rag_search` และ tools ของ ENDEAVOR_RAG เพื่อใช้ retrieval ที่พร้อมอยู่ในงานของคุณ
-- **Pipe C — Connect through MCP:** ให้ MCP client เรียก `rag_retrieve` ผ่าน
-  stdio แล้วส่งต่อให้ Pipeline B โดยไม่เปิด LLM หรือ filesystem tool เพิ่ม
+- **Pipe C — Connect through MCP:** ให้ MCP client ใช้ retrieval และ read-only
+  KB inspection (`rag_retrieve`, `rag_list`, `rag_search_files`, `rag_read_file`,
+  `rag_health`) ผ่าน stdio โดยไม่เปิดหรือเรียก Pipeline A LLM
 
 ## Why ENDEAVOR_RAG
 
@@ -126,18 +127,30 @@ retrieval ของ ENDEAVOR_RAG จากโปรเซสอื่น:
 
 ```text
 MCP client/agent → Pipe C (stdio) → Pipe B (rag_retrieve) → retriever/index
+                              └→ shared KB operations → registry/files/health
 ```
 
-Pipe C มี tool เดียวคือ `rag_retrieve` และคง semantics ของ Pipe B เดิมไว้ ได้แก่
-`query` แบบข้อความเดียวหรือ query variants สูงสุด 8 รายการ, `mode` (`chunks`,
-`files`, `source_first`) และตัวกรอง tags/ชื่อไฟล์/วันที่/ชนิดไฟล์ การเรียกใช้จะถูก
-ตรวจชนิดข้อมูลและขนาดก่อนส่งต่อ, serialize เพื่อป้องกัน concurrent access ของ
-Chroma/BM25, จำกัดผลลัพธ์ที่ 50,000 ตัวอักษร และแปลง backend error เป็น error
-ทั่วไปโดยไม่ส่งรายละเอียด path หรือ traceback ออกไป
+Pipe C มี 5 read-only tools:
 
-Pipe C เป็น read-only และไม่เรียก `main.py`, `rag_search.py` หรือ `llm_client.py`:
-จึงไม่เปิด Pipeline A และไม่ใช้ model server เพิ่ม การเริ่ม server ใช้ stdio
-เท่านั้นและไม่เปิด network port:
+- `rag_retrieve` — semantic retrieval ผ่าน Pipeline B (Dense + BM25 + RRF)
+- `rag_list` — ดูรายการไฟล์ที่ register ใน knowledge base แบบแบ่งหน้า
+- `rag_search_files` — ค้นชื่อไฟล์แบบ case-insensitive
+- `rag_read_file` — อ่านเฉพาะไฟล์ที่ register อยู่และอยู่ใต้ configured knowledge root
+- `rag_health` — ตรวจ Chroma/BM25/registry health
+
+`rag_retrieve` คง semantics ของ Pipe B เดิมไว้ ได้แก่ `query` แบบข้อความเดียวหรือ
+query variants สูงสุด 8 รายการ, `mode` (`chunks`, `files`, `source_first`) และตัวกรอง
+ต่าง ๆ โดยมีกฎสำคัญว่า query variants ทุกตัวต้องเป็น **คำถามเดียวกัน (SAME question)**
+และรักษา intent เดิม ตัวอย่างที่เหมาะสมคือประโยคไทยต้นฉบับ, คำถามเดียวกันภาษาอังกฤษ,
+keyword ไทย และ keyword อังกฤษของคำถามเดิม ห้ามใช้ variants เพื่อเพิ่ม subquestion,
+มุมที่แคบลง, assumption ใหม่ หรือหัวข้อที่เพียงเกี่ยวข้องกัน เพราะแต่ละ variant จะถูก
+ค้นแยกด้วย Dense + BM25 แล้วรวมอันดับด้วย RRF
+
+Pipe C ตรวจชนิดข้อมูลและขนาด, serialize access ที่แตะ Chroma/BM25, จำกัดผลลัพธ์ที่
+50,000 ตัวอักษร และแปลง backend error เป็น error ทั่วไปโดยไม่ส่งรายละเอียด path หรือ
+traceback ออกไป ทั้ง 5 tools ไม่ import หรือเรียก `main.py`, `rag_search.py` หรือ
+`llm_client.py` จึงไม่เปิด Pipeline A และไม่ใช้ generative LLM เพิ่ม การเริ่ม server
+ใช้ stdio เท่านั้นและไม่เปิด network port:
 
 ```bash
 # Run from the repository root after installation
